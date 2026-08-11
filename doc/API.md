@@ -15,12 +15,19 @@ symbols resolved through the resolver:
 
 - module_mutex: module list and mod_tree protection
 - modules: module list head, fallback re-insert anchor
-- mod_tree_insert / mod_tree_remove: by addr lookup (optional)
-- btf_kobj: module BTF sysfs parent (optional)
+- mod_tree_insert / mod_tree_remove: by addr lookup
+- btf_kobj: module BTF sysfs parent
 
-missing optional symbols degrade gracefully (mod_tree and BTF steps are
-skipped). kernel exported calls used: kobject_del, sysfs_remove_bin_file,
+missing optional symbols goto low level (affected actions are skipped).
+kernel exported calls used: kobject_del, sysfs_remove_bin_file,
 synchronize_rcu.
+
+## Actions
+
+module hiding is a combination of steps controlled by a mask set with
+hm_set_actions. default HM_ACT_USER: module_list unlink, sysfs dir
+removal, BTF file deletion. add HM_ACT_MOD_TREE and HM_ACT_FIELDS
+(HM_ACT_ALL) for kernel-level inspection.
 
 ## Lifecycle
 
@@ -61,9 +68,12 @@ zero an address range. irreversible.
 
 drop all registered targets. use before hm_hide, not after.
 
-**void hm_set_clear_fields(bool en)**
+**void hm_set_actions(unsigned long mask)**
 
-zero mod->name, keep state LIVE and zero taints when hiding a module.
+set the hide step mask for HM_OBJ_MODULE targets: HM_ACT_LIST unlinks
+module_list, HM_ACT_SYSFS removes the sysfs dir, HM_ACT_BTF deletes the
+BTF file, HM_ACT_MOD_TREE removes mod_tree entries, HM_ACT_FIELDS zeroes
+name/state/taints. default HM_ACT_USER. HM_ACT_ALL enables everything.
 
 all hm_add_* return 0 on success, -ENOSPC when the registry is full
 (HM_OBJ_MAX).

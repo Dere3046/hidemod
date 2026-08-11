@@ -12,6 +12,14 @@
 
 #define HM_OBJ_MAX 16
 
+#define HM_ACT_LIST     BIT(0)
+#define HM_ACT_SYSFS    BIT(1)
+#define HM_ACT_BTF      BIT(2)
+#define HM_ACT_MOD_TREE BIT(3)
+#define HM_ACT_FIELDS   BIT(4)
+#define HM_ACT_USER     (HM_ACT_LIST | HM_ACT_SYSFS | HM_ACT_BTF)
+#define HM_ACT_ALL      (HM_ACT_USER | HM_ACT_MOD_TREE | HM_ACT_FIELDS)
+
 enum hm_obj_type {
 	HM_OBJ_MODULE,
 	HM_OBJ_LIST,
@@ -45,7 +53,7 @@ int hm_add_kobj(struct kobject *kobj);
 int hm_add_mod_tree(struct module *mod);
 int hm_add_zero(unsigned long addr, size_t size);
 void hm_clear_objs(void);
-void hm_set_clear_fields(bool en);
+void hm_set_actions(unsigned long mask);
 
 int hm_hide(void);
 int hm_unhide(void);

