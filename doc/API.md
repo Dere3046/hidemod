@@ -83,7 +83,7 @@ all hm_add_* return 0 on success, -ENOSPC when the registry is full
 **int hm_hide(void)**
 
 commits the hide. returns 0 immediately; the hide runs a few ms later
-on the workqueue.
+on the workqueue. -EINVAL before hm_init.
 
 **int hm_unhide(void)**
 
