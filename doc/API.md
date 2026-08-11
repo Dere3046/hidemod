@@ -87,10 +87,9 @@ on the workqueue.
 
 **int hm_unhide(void)**
 
-flushes the hide work and restores module_list and mod_tree entries.
-sysfs and BTF are not restored; unload teardown is safe because
-kobject_del cleared state_in_sysfs and kernfs removal on a missing file
-is a no op.
+flushes the hide work and restores module_list, mod_tree entries,
+module name and the sysfs dir (kset re-attached, kobject_add). BTF file
+is not restored. after unhide the module unloads normally.
 
 **bool hm_hidden(void)**
 

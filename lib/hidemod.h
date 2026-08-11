@@ -38,6 +38,7 @@ struct hm_obj {
 	} u;
 	size_t size;
 	struct list_head *anchor;
+	char name_save[MODULE_NAME_LEN];
 };
 
 struct hm_resolver {
